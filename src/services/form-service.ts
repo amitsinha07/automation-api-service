@@ -49,28 +49,39 @@ export async function htmlFormService(
 	});
 }
 
+// Key prefixes and TTL form a cross-service contract with the
+// automation-frontend backend's checkFormCompletion poller — keep in sync.
+const FORM_COMPLETED_PREFIX = "form_completed";
+const LATEST_FORM_PREFIX = "latest_form";
+const FORM_COMPLETION_TTL_SECONDS = 3600;
+
 export async function callbackFormService(
 	transaction_id: string,
+	form_id: string,
 	success: boolean | string,
 	message: string,
-	form_id: string | undefined,
 	loggerMeta: any
 ): Promise<void> {
-	const completionKey = `form_completed:${transaction_id}`;
+	const completionKey = `${FORM_COMPLETED_PREFIX}:${transaction_id}:${form_id}`;
+	const pointerKey = `${LATEST_FORM_PREFIX}:${transaction_id}`;
+	// Completion data must be written before the pointer so that a pointer
+	// read by the poller always references existing data.
 	await RedisService.setKey(
 		completionKey,
 		JSON.stringify({
 			completed: true,
+			form_id,
 			success: success ?? false,
 			message: message ?? "",
-			form_id: form_id ?? null,
 			timestamp: new Date().toISOString(),
 		}),
-		3600
+		FORM_COMPLETION_TTL_SECONDS
 	);
+	await RedisService.setKey(pointerKey, form_id, FORM_COMPLETION_TTL_SECONDS);
 	logger.info("Completion flag set in Redis", loggerMeta, {
 		transaction_id,
-		key: completionKey,
 		form_id,
+		completionKey,
+		pointerKey,
 	});
 }

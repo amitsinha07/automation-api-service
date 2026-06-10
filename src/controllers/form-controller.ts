@@ -65,11 +65,14 @@ export async function callbackController(req: Request, res: Response) {
 			return;
 		}
 
+		// success may arrive as a boolean or the strings "true"/"false"
+		const normalizedSuccess = success === true || success === "true";
+
 		await callbackFormService(
 			transaction_id,
-			success,
-			message,
 			form_id,
+			normalizedSuccess,
+			message,
 			getLoggerMetaData(req)
 		);
 
