@@ -23,9 +23,10 @@ const commController = new CommunicationController();
 const dbController = new DataController();
 const sessionController = new SessionController();
 
-// POST /{base}/buyer/callback
-// Body: { transaction_id: string, success: boolean|string, message: string }
-router.post("/callback", callbackController);
+// GET /{base}/buyer/callback
+// Derives its own subscriberUrl, looks up the stored workbench URL, writes
+// form_completed:{sessionId}, and 302-redirects the browser back.
+router.get("/callback", callbackController);
 
 router.post(
     "/:action",

@@ -50,38 +50,41 @@ export async function htmlFormService(
 }
 
 // Key prefixes and TTL form a cross-service contract with the
-// automation-frontend backend's checkFormCompletion poller — keep in sync.
+// automation-frontend backend — keep in sync.
+//   form_completed:{session_id}      -> completion payload (written here)
+//   redirection_url:{subscriberUrl}  -> full workbench URL (written by the frontend backend)
 const FORM_COMPLETED_PREFIX = "form_completed";
-const LATEST_FORM_PREFIX = "latest_form";
+const REDIRECTION_URL_PREFIX = "redirection_url";
 const FORM_COMPLETION_TTL_SECONDS = 3600;
 
+// Writes form_completed:{session_id}. Session-scoped — no transaction_id/form_id.
 export async function callbackFormService(
-	transaction_id: string,
-	form_id: string,
+	session_id: string,
 	success: boolean | string,
 	message: string,
 	loggerMeta: any
 ): Promise<void> {
-	const completionKey = `${FORM_COMPLETED_PREFIX}:${transaction_id}:${form_id}`;
-	const pointerKey = `${LATEST_FORM_PREFIX}:${transaction_id}`;
-	// Completion data must be written before the pointer so that a pointer
-	// read by the poller always references existing data.
+	const completionKey = `${FORM_COMPLETED_PREFIX}:${session_id}`;
 	await RedisService.setKey(
 		completionKey,
 		JSON.stringify({
 			completed: true,
-			form_id,
 			success: success ?? false,
 			message: message ?? "",
 			timestamp: new Date().toISOString(),
 		}),
 		FORM_COMPLETION_TTL_SECONDS
 	);
-	await RedisService.setKey(pointerKey, form_id, FORM_COMPLETION_TTL_SECONDS);
 	logger.info("Completion flag set in Redis", loggerMeta, {
-		transaction_id,
-		form_id,
+		session_id,
 		completionKey,
-		pointerKey,
 	});
+}
+
+// Reads the workbench redirect URL saved by the frontend backend, keyed by the
+// subscriberUrl the callback derives from its own path.
+export async function getRedirectionUrl(
+	subscriberUrl: string
+): Promise<string | null> {
+	return RedisService.getKey(`${REDIRECTION_URL_PREFIX}:${subscriberUrl}`);
 }

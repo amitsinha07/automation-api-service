@@ -1,7 +1,11 @@
 import { Request, Response } from "express";
 import logger from "@ondc/automation-logger";
 import { getLoggerMetaData } from "../utils/loggingUtils";
-import { htmlFormService, callbackFormService } from "../services/form-service";
+import {
+	htmlFormService,
+	callbackFormService,
+	getRedirectionUrl,
+} from "../services/form-service";
 
 export async function htmlFormController(req: Request, res: Response) {
 	try {
@@ -48,45 +52,67 @@ export async function htmlFormController(req: Request, res: Response) {
 
 export async function callbackController(req: Request, res: Response) {
 	try {
-		const { transaction_id, success, message, form_id } = req.body ?? {};
+		// The callback carries no session_id; derive our own subscriberUrl from
+		// the callback's own URL ({subscriberUrl}/callback) and look up the
+		// workbench URL the frontend stored for it.
+		const host = req.get("x-forwarded-host") ?? req.get("host");
+		const proto = req.get("x-forwarded-proto") ?? req.protocol;
+		const subscriberUrl = `${proto}://${host}${req.baseUrl}${req.path}`.replace(
+			/\/callback\/?$/,
+			""
+		);
 
-		logger.info("Callback received", getLoggerMetaData(req), {
-			transaction_id,
-			success,
-			message,
-			form_id,
+		logger.info("Callback received (GET)", getLoggerMetaData(req), {
+			subscriberUrl,
 		});
 
-		if (!transaction_id || !form_id) {
-			res.status(400).json({
-				success: false,
-				message: "Missing required fields: transaction_id and form_id",
-			});
+		const redirectUrl = await getRedirectionUrl(subscriberUrl);
+		if (!redirectUrl) {
+			res
+				.status(404)
+				.type("html")
+				.send(
+					renderCallbackPage("No redirection URL found for this subscriber.")
+				);
 			return;
 		}
 
-		// success may arrive as a boolean or the strings "true"/"false"
-		const normalizedSuccess = success === true || success === "true";
+		// sessionId lives inside the stored workbench URL.
+		const sessionId = new URL(redirectUrl).searchParams.get("sessionId");
+		if (!sessionId) {
+			res
+				.status(400)
+				.type("html")
+				.send(
+					renderCallbackPage("Stored redirection URL is missing sessionId.")
+				);
+			return;
+		}
 
+		// Reaching the callback means the form finished; only an explicit
+		// success=false is treated as a failure.
+		const normalizedSuccess = (req.query.success as string) !== "false";
 		await callbackFormService(
-			transaction_id,
-			form_id,
+			sessionId,
 			normalizedSuccess,
-			message,
+			"",
 			getLoggerMetaData(req)
 		);
 
-		res.status(200).json({
-			success: true,
-			message: "Callback received and recorded",
-			transaction_id,
-			timestamp: new Date().toISOString(),
-		});
+		res.redirect(302, redirectUrl);
 	} catch (error: any) {
 		logger.error("Error in callback", getLoggerMetaData(req), error);
-		res.status(500).json({
-			success: false,
-			message: `Error processing callback: ${error.message}`,
-		});
+		res
+			.status(500)
+			.type("html")
+			.send(renderCallbackPage("Error processing callback."));
 	}
+}
+
+function renderCallbackPage(message: string): string {
+	return (
+		`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Callback</title></head>` +
+		`<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">` +
+		`<p style="font-size:1.1rem;color:#334155">${message}</p></body></html>`
+	);
 }
